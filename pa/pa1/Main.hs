@@ -1,6 +1,8 @@
 import Numeric
 import Data.Char
 import Data.Bits
+import Data.List
+import Data.Ord
 
 encoded = [ "315c4eeaa8b5f8aaf9174145bf43e1784b8fa00dc71d885a804e5ee9fa40b16349c146fb778cdf2d3aff021dfff5b403b510d0d0455468aeb98622b137dae857553ccd8883a7bc37520e06e515d22c954eba5025b8cc57ee59418ce7dc6bc41556bdb36bbca3e8774301fbcaa3b83b220809560987815f65286764703de0f3d524400a19b159610b11ef3e"
           , "234c02ecbbfbafa3ed18510abd11fa724fcda2018a1a8342cf064bbde548b12b07df44ba7191d9606ef4081ffde5ad46a5069d9f7f543bedb9c861bf29c7e205132eda9382b0bc2c5c4b45f919cf3a9f1cb74151f6d551f4480c82b2cb24cc5b028aa76eb7b4ab24171ab3cdadb8356f"
@@ -17,6 +19,7 @@ encoded = [ "315c4eeaa8b5f8aaf9174145bf43e1784b8fa00dc71d885a804e5ee9fa40b16349c
 decoded = map decode encoded
 target = decoded !! (length decoded - 1)
 
+-- break the list into blocks of n items
 split _ [] = []
 split n xs = a : split n b where
     (a, b) = splitAt n xs
@@ -32,6 +35,7 @@ hex x = pad $ showHex x "" where
     pad c | length c == 1 = "0" ++ c
     pad c = c
 
+-- cut the longest of two lists
 samelen xs ys | length xs > length ys = (take (length ys) xs, ys)
 samelen xs ys = (xs, take (length xs) ys)
 
@@ -39,6 +43,7 @@ toOrd = map ord
 toChr = map chr
 
 -- 2 char lists (decoded) -> xored [Char] (decoded)
+-- XOR two lists, lists must be decoded (NOT hex representation)
 strxor a b =
     let (xs, ys) = samelen a b
     in map (\(x, y) -> chr $ x `xor` y) $ zip (toOrd xs) (toOrd ys)
@@ -54,23 +59,44 @@ xorchr a b = chr $ (ord a) `xor` (ord b)
 
 isGoodChar c = isAlpha c && isAscii c
 
+-- get index of the max element
+maxi xs = snd $ maximumBy (comparing fst) (zip xs [0..])
+
+-- return key with highest score
+best i keys =
+    let scores = map (\k -> score i k) keys
+    in keys !! maxi scores
+
+-- apply key to every message at position i
+decodePosWithKey i k = map apply decoded where
+    apply line = (line !! i) `xorchr` k
+
+-- score of the key is the number of a..zA..Z chars that are produced
+-- if the key is applied to all messages at position i
+score i k = length $ filter isGoodChar $ decodePosWithKey i k
+
+-- iterate over chars of a pair of messages and select the best key for every
+-- position
 guess :: [Char] -> Int -> Int -> [Char]
 guess key i j =
     let (a, b) = (decoded !! i, decoded !! j)
         (xs, ys) = samelen a b
         xored = strxor a b
 
-        check (k, a, e) | isGoodChar a = a `xorchr` ' ' `xorchr` e
-        check (k, _, _) = k
+        check (i, k, a, e1, e2) | isGoodChar a =
+            let k1 = a `xorchr` ' ' `xorchr` e1
+                k2 = a `xorchr` ' ' `xorchr` e2
+            in best i [k, k1, k2]
+        check (i, k, _, _, _) = k
 
-    in map check $ zip3 key xored xs
+    in map check $ zip5 [0..length xored] key xored xs ys
 
 -- prints only ascii chars, replaces the rest with space
 human :: [Char] -> [Char]
 human xs = map flt xs where
     flt c | valid c = c
     flt _ = '.'
-    valid c = isGoodChar c || c == ' '
+    valid c = isPrint c || c == ' '
 
 display (i, x) = putStrLn $ hex i ++ " " ++ x
 
@@ -98,7 +124,9 @@ k = e1 + a + ' '
 main = do
     let n = length encoded
         last = n - 1
-    display (0, human $ sxor [0, 1])
+
+    putStrLn "Encrypted messages displayed as text"
+    mapM_ display [(i, human $ decoded !! i) | i <- [0..last]]
 
     putStrLn ""
     putStrLn "Last message xored with all other messages"
@@ -108,6 +136,12 @@ main = do
         mix k (i, j) = guess k i j
         key1 = foldl mix key0 [(i, j) | i <- [0..last], j <- [0..last]]
         key = key1
+
+    -- this is the key that I obtained automatically
+--  let key = decode "66396e89c9dbd8cb9874352acd6395102eafce78aa7fed28a06e6bc98d29c50b69b025c919f8aa401a9c6d708f80c066c763fef0123148cdd8e802d05ba98777335daefcecd59c433a6b268b60bf4ef03c9a61"
+    -- this is the key that I manually fixed (5 chars)
+    let key = decode "66396e89c9dbd8cc9874352acd6395102eafce78aa7fed08a07f6bc98d29c50b69b0339a19f8aa401a9c6d708f80c066c763fef0123148cdd8e802d05ba98777335daefcecd59c433a6b268b60bf4ef03c9a61"
+    --                              cc                              08  7f                339a                                                                                              .
     putStrLn ""
     putStrLn "Guessed key (0, last)"
     putStrLn $ "00 " ++ human key
@@ -115,4 +149,5 @@ main = do
 
     putStrLn ""
     putStrLn "Decoded messages"
+    putStrLn ("-- " ++ (take 83 $ cycle "1234567890"))
     mapM_ display [(i, human $ strxor (decoded !! i) key) | i <- [0..last]]
