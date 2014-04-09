@@ -26,28 +26,6 @@ hex x = pad $ showHex x "" where
     pad c | length c == 1 = "0" ++ c
     pad c = c
 
--- cut the longest of two lists
-samelen xs ys | length xs > length ys = (take (length ys) xs, ys)
-samelen xs ys = (xs, take (length xs) ys)
-
-toOrd = map ord
-toChr = map chr
-
--- 2 char lists (decoded) -> xored [Char] (decoded)
--- XOR two lists, lists must be decoded (NOT hex representation)
-strxor a b =
-    let (xs, ys) = samelen a b
-    in map (\(x, y) -> chr $ x `xor` y) $ zip (toOrd xs) (toOrd ys)
-
--- xor list of ids from encoded list
--- sxor ids =
---     let values = [decoded !! i | i <- ids]
---         mix a b = strxor a b
---     in foldl1 mix values
-
-xorchr :: Char -> Char -> Char
-xorchr a b = chr $ (ord a) `xor` (ord b)
-
 -- prints only ascii chars, replaces the rest with space
 human :: [Char] -> [Char]
 human xs = map flt xs where
@@ -65,14 +43,33 @@ cbcCt1 = "4ca00ff4c898d61e1edbf1800618fb2828a226d160dad07883d04e008a7897ee2e4b74
 keyZeroes = decode "00000000000000000000000000000000"
 keyFF = decode "ffffffffffffffffffffffffffffffff"
 
--- aesHighlevel :: String -> String -> [Word8]
--- aesHighlevel hexKey hexCipher = hexCipher where
---     key = decode hexKey
---     cipher = decode hexCipher
---
---     keys = keyExpansion key
---
--- aes = aesHighlevel cbcKey1 cbcCt1
+aesHighlevel :: String -> String -> [Word8]
+aesHighlevel hexKey hexCipher =
+    let key = decode hexKey
+        cipher = decode hexCipher
+
+        keys = split 16 $ keyExpansion key
+
+        state = cipher
+
+        state1 = xorwords (head keys) state
+        keys1 = tail keys
+
+        addRoundKey key state = xorwords key state
+        subBytes state = state
+        shiftRows state = state
+        mixColumns state = state
+
+        middle = [subBytes, shiftRows, mixColumns]
+        final = [subBytes, shiftRows]
+
+        modifiers = [[]] ++ replicate 9 middle ++ [final]
+        apply state (key, ms) = addRoundKey key newState where
+            newState = foldl (\state m -> m state) state ms
+
+    in foldl apply state $ zip keys modifiers
+
+aes = aesHighlevel cbcKey1 cbcCt1
 
 -- | Nice AES manual
 -- http://www.samiam.org/rijndael.html
