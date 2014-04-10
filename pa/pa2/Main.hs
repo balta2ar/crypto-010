@@ -5,6 +5,8 @@ import Data.Word
 import Data.List
 import Data.Ord
 
+import Debug.Trace
+
 -- | Common methods
 
 -- break the list into blocks of n items
@@ -18,6 +20,12 @@ decode xs = map (fromIntegral . fst . head . readHex) $ split 2 xs
 -- [Char] -> hex string
 encode :: [Word8] -> String
 encode xs = concat $ map hex xs
+
+decodeStr xs = map (chr . fst . head . readHex) $ split 2 xs
+encodeStr xs = concat $ map hexStr $ map ord xs
+hexStr x = pad $ showHex x "" where
+    pad c | length c == 1 = "0" ++ c
+    pad c = c
 
 bin x = showIntAtBase 2 intToDigit x ""
 
@@ -43,39 +51,80 @@ cbcCt1 = "4ca00ff4c898d61e1edbf1800618fb2828a226d160dad07883d04e008a7897ee2e4b74
 keyZeroes = decode "00000000000000000000000000000000"
 keyFF = decode "ffffffffffffffffffffffffffffffff"
 
+--testKey = encode keyZeroes
+--testMessage = encodeStr "HelloWorld123456"
+testKey = encodeStr "mysecretpassword"
+testMessage = encodeStr "Secret Message A"
+
+nistKey = "2b7e151628aed2a6abf7158809cf4f3c"
+nistMessage = "6bc1bee22e409f96e93d7e117393172a"
+nistExpected = "3ad77bb40d7a3660a89ecaf32466ef97"
+-- expected CT: e8da47acc08bc751745ef8fbff44e107
+
+fipsKey = "000102030405060708090a0b0c0d0e0f"
+fipsMessage = "00112233445566778899aabbccddeeff"
+fipsExpected = "69c4e0d86a7b0430d8cdb78070b4c55a"
+
+fips = aesHighlevel fipsKey fipsMessage
+
+mixColumnsMatrix :: [[Word8]]
+mixColumnsMatrix = [[2, 3, 1, 1],
+                    [1, 2, 3, 1],
+                    [1, 1, 2, 3],
+                    [3, 1, 1, 2]]
+
 aesHighlevel :: String -> String -> [Word8]
 aesHighlevel hexKey hexCipher =
     let key = decode hexKey
         cipher = decode hexCipher
-
         keys = split 16 $ keyExpansion key
-
         state = cipher
 
-        state1 = xorwords (head keys) state
-        keys1 = tail keys
+        -- Transformation functions
+        addRoundKey key state =
+            let result = xorwords key state
+            in trace ("After addRoundKey: " ++ (show $ encode result)) result
+        subBytes state =
+            let result = map sBox state
+            in trace ("After subBytes:    " ++ (show $ encode result)) result
+        shiftRows state =
+            let result = concat $ transpose $ map (uncurry rotateLeft) $ zip [0..3] $ transpose $ split 4 state
+            in trace ("After shiftRows:   " ++ (show $ encode result)) result
+        mixColumns state =
+            let state' = split 4 state
+                temp = zipWith mulColumn (repeat mixColumnsMatrix) state'
+                result = concat temp
+            in trace("After mixColumns:  " ++ (show $ encode result)) result
 
-        addRoundKey key state = xorwords key state
-        subBytes state = state
-        shiftRows state = state
-        mixColumns state = state
+        -- Helpers
+        mulVec a b = foldl1 (xor . fromIntegral) $ zipWith gMul a b
+        mulColumn matrix vec = zipWith mulVec matrix (repeat vec)
 
+        -- Function sets for different rounds
         middle = [subBytes, shiftRows, mixColumns]
         final = [subBytes, shiftRows]
 
+        -- Apply 1. no modifiers for the first round
+        --       2. 3 modifiers for the next 9 rounds
+        --       3. 2 modifiers for the last round
+        -- addRoundKey is applied after each round
         modifiers = [[]] ++ replicate 9 middle ++ [final]
         apply state (key, ms) = addRoundKey key newState where
             newState = foldl (\state m -> m state) state ms
 
     in foldl apply state $ zip keys modifiers
 
-aes = aesHighlevel cbcKey1 cbcCt1
+--aes = aesHighlevel cbcKey1 cbcCt1
+aes = aesHighlevel testKey testMessage
 
 -- | Nice AES manual
 -- http://www.samiam.org/rijndael.html
 
 nfirst = take
 nlast n xs = drop (length xs - n) xs
+
+rotateLeft _ [] = []
+rotateLeft n xs = zipWith const (drop n (cycle xs)) xs
 
 xorwords xs ys = map (uncurry xor) $ zip xs ys
 
@@ -107,6 +156,19 @@ sBox x = sBoxTable !! (fromIntegral x)
 rCon :: Word8 -> Word8
 rCon x = rConTable !! (fromIntegral x)
 
+gMul :: Word8 -> Word8 -> Word8
+gMul a b = fromIntegral resultP where
+    (resultP, _, _ ) = foldl inner (0, a, b) [0..7]
+
+    inner :: (Integer, Word8, Word8) -> Integer -> (Integer, Word8, Word8)
+    inner (p, a, b) i =
+        let newP = if b .&. 0x01 == 0x01 then p `xor` (fromIntegral a) else p
+            hiBit = a .&. 0x80
+            newA = shift (fromIntegral a) 1
+            newA2 = if hiBit == 0x80 then newA `xor` 0x1B else newA
+            newB = shift (fromIntegral b) (-1)
+        in (newP, newA2, newB)
+
 keyExpansionCore i t =
     let a = rotate8 t
         b = map sBox a
@@ -128,7 +190,9 @@ keyExpansionRound key i =
 keyExpansion key = foldl keyExpansionRound key [1..10]
 
 main = do
-    putStrLn "hello"
+    -- putStrLn "hello"
     -- let plain = aesHighlevel cbcKey1 cbcCt1
-    -- putStrLn $ human plain
-    putStrLn "done"
+    -- putStrLn $ encode $ aes
+    -- putStrLn $ encode $ aesHighlevel nistKey nistMessage
+    putStrLn $ encode $ fips
+    -- putStrLn "done"
