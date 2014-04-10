@@ -7,8 +7,6 @@ import Data.Word
 import Data.List
 import Data.Ord
 
-import Debug.Trace
-
 -- | Common methods
 
 -- break the list into blocks of n items
@@ -77,64 +75,66 @@ mixColumnsMatrix = [[2, 3, 1, 1],
                     [1, 1, 2, 3],
                     [3, 1, 1, 2]]
 
+invMixColumnsMatrix :: [[Word8]]
+invMixColumnsMatrix = [[14, 11, 13, 9],
+                       [9, 14, 11, 13],
+                       [13, 9, 14, 11],
+                       [11, 13, 9, 14]]
+
+-- State Key => NewState
+type Modifier = [Word8] -> [Word8] -> [Word8]
+
+aes :: [Modifier] -> [Modifier] -> [Modifier] -> [Word8] -> [Word8] -> [Word8]
+aes initial intermediate final key state =
+    let keys = split 16 $ keyExpansion key
+        modifiers = [initial] ++ replicate 9 intermediate ++ [final]
+    in foldl execRound state $ zip keys modifiers
+
+execRound state (key, modifiers) = foldl (\state m -> m state key) state modifiers
+
+aesEncrypt :: [Word8] -> [Word8] -> [Word8]
+aesEncrypt key message = aes initial intermediate final key message where
+    initial      = [modAddRoundKey]
+    intermediate = [modSubBytes, modShiftRows, modMixColumns, modAddRoundKey]
+    final        = [modSubBytes, modShiftRows, modAddRoundKey]
+
+-- State -> Key -> NewState
+modAddRoundKey   = xorwords
+modSubBytes      = subBytes (sBox sBoxTable)
+modInvSubBytes   = subBytes (sBox invSBoxTable)
+modShiftRows     = shiftRows rotateLeft
+modInvShiftRows  = shiftRows rotateRight
+modMixColumns    = mixColumns mixColumnsMatrix
+modInvMixColumns = mixColumns invMixColumnsMatrix
+
+subBytes  sbox    state _ = map sbox state
+shiftRows rotate' state _ = outro where
+    intro  = transpose $ split 4 state
+    middle = map (uncurry rotate') $ zip [0..3] intro
+    outro  = concat $ transpose $ middle
+mixColumns matrix state _ = concat result where
+    result = zipWith mulColumn (repeat matrix) state'
+    state' = split 4 state
+
+    -- Helpers
+    mulVec a b = foldl1 (xor . fromIntegral) $ zipWith gMul a b
+    mulColumn matrix vec = zipWith mulVec matrix (repeat vec)
+
 aesHighlevel :: String -> String -> [Word8]
-aesHighlevel hexKey hexCipher =
-    let key = decode hexKey
-        cipher = decode hexCipher
-        keys = split 16 $ keyExpansion key
-        state = cipher
-
-        -- Transformation functions
-        addRoundKey key state =
-            let result = xorwords key state
-            -- in trace ("After addRoundKey: " ++ (show $ encode result)) result
-            in result
-        subBytes state =
-            let result = map sBox state
-            -- in trace ("After subBytes:    " ++ (show $ encode result)) result
-            in result
-        shiftRows state =
-            let result = concat $ transpose $ map (uncurry rotateLeft) $ zip [0..3] $ transpose $ split 4 state
-            -- in trace ("After shiftRows:   " ++ (show $ encode result)) result
-            in result
-        mixColumns state =
-            let state' = split 4 state
-                temp = zipWith mulColumn (repeat mixColumnsMatrix) state'
-                result = concat temp
-            -- in trace("After mixColumns:  " ++ (show $ encode result)) result
-            in result
-
-        -- Helpers
-        mulVec a b = foldl1 (xor . fromIntegral) $ zipWith gMul a b
-        mulColumn matrix vec = zipWith mulVec matrix (repeat vec)
-
-        -- Function sets for different rounds
-        middle = [subBytes, shiftRows, mixColumns]
-        final = [subBytes, shiftRows]
-
-        -- Apply 1. no modifiers for the first round
-        --       2. 3 modifiers for the next 9 rounds
-        --       3. 2 modifiers for the last round
-        -- addRoundKey is applied after each round
-        modifiers = [[]] ++ replicate 9 middle ++ [final]
-        apply state (key, ms) = addRoundKey key newState where
-            newState = foldl (\state m -> m state) state ms
-
-    in foldl apply state $ zip keys modifiers
+aesHighlevel hexKey hexMessage = aesEncrypt (decode hexKey) (decode hexMessage)
 
 --aes = aesHighlevel cbcKey1 cbcCt1
-aes = aesHighlevel testKey testMessage
+aesFull = aesHighlevel testKey testMessage
 
 -- | Nice AES manual
 -- http://www.samiam.org/rijndael.html
 
-nfirst = take
-nlast n xs = drop (length xs - n) xs
-
-rotateLeft _ [] = []
-rotateLeft n xs = zipWith const (drop n (cycle xs)) xs
-
-xorwords xs ys = map (uncurry xor) $ zip xs ys
+nfirst            = take
+nlast       n  xs = drop (length xs - n) xs
+nrotate     n  xs = take (length xs) $ drop (n `mod` length xs) $ cycle xs
+rotateLeft  n  xs = nrotate n xs
+rotateRight n  xs = nrotate (negate n) xs
+xorwords    xs ys = map (uncurry xor) $ zip xs ys
 
 rConTable :: [Word8]
 rConTable = [0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
@@ -177,10 +177,10 @@ invSBoxTable = [0x52, 0x09, 0x6A, 0xD5, 0x30, 0x36, 0xA5, 0x38, 0xBF, 0x40, 0xA3
 
 rotate8 (x:xs) = xs ++ [x]
 
-sBox :: Word8 -> Word8
-sBox x = sBoxTable !! (fromIntegral x)
-rCon :: Word8 -> Word8
-rCon x = rConTable !! (fromIntegral x)
+sBox :: [Word8] -> Word8 -> Word8
+sBox table x = table !! (fromIntegral x)
+rCon :: [Word8] -> Word8 -> Word8
+rCon table x = table !! (fromIntegral x)
 
 gMul :: Word8 -> Word8 -> Word8
 gMul a b = fromIntegral resultP where
@@ -195,10 +195,11 @@ gMul a b = fromIntegral resultP where
             newB = shift (fromIntegral b) (-1)
         in (newP, newA2, newB)
 
+-- | Key expansion
 keyExpansionCore i t =
     let a = rotate8 t
-        b = map sBox a
-        c = rCon i
+        b = map (sBox sBoxTable) a
+        c = rCon rConTable i
         d = head b `xor` c
     in d : tail b
 
