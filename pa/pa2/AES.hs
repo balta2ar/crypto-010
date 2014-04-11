@@ -19,10 +19,10 @@ decode :: String -> [Word8]
 decode xs = map (fromIntegral . fst . head . readHex) $ split 2 xs
 -- [Char] -> hex string
 encode :: [Word8] -> String
-encode xs = concat $ map hex xs
+encode = concatMap hex
 
 decodeStr xs = map (chr . fst . head . readHex) $ split 2 xs
-encodeStr xs = concat $ map hexStr $ map ord xs
+encodeStr xs = concatMap hexStr $ map ord xs
 hexStr x = pad $ showHex x "" where
     pad c | length c == 1 = "0" ++ c
     pad c = c
@@ -36,7 +36,7 @@ hex x = pad $ showHex x "" where
 
 -- prints only ascii chars, replaces the rest with space
 human :: [Char] -> [Char]
-human xs = map flt xs where
+human = map flt where
     flt c | valid c = c
     flt _ = '.'
     valid c = isPrint c || c == ' '
@@ -93,7 +93,7 @@ aes initial intermediate final key state =
 execRound state (key, modifiers) = foldl (\state m -> m state key) state modifiers
 
 aesEncrypt :: [Word8] -> [Word8] -> [Word8]
-aesEncrypt key message = aes initial intermediate final key message where
+aesEncrypt = aes initial intermediate final where
     initial      = [modAddRoundKey]
     intermediate = [modSubBytes, modShiftRows, modMixColumns, modAddRoundKey]
     final        = [modSubBytes, modShiftRows, modAddRoundKey]
@@ -110,7 +110,7 @@ modInvMixColumns = mixColumns invMixColumnsMatrix
 subBytes  sbox    state _ = map sbox state
 shiftRows rotate' state _ = outro where
     intro  = transpose $ split 4 state
-    middle = map (uncurry rotate') $ zip [0..3] intro
+    middle = zipWith rotate' [0..3] intro
     outro  = concat $ transpose $ middle
 mixColumns matrix state _ = concat result where
     result = zipWith mulColumn (repeat matrix) state'
@@ -132,9 +132,9 @@ aesFull = aesHighlevel testKey testMessage
 nfirst            = take
 nlast       n  xs = drop (length xs - n) xs
 nrotate     n  xs = take (length xs) $ drop (n `mod` length xs) $ cycle xs
-rotateLeft  n  xs = nrotate n xs
-rotateRight n  xs = nrotate (negate n) xs
-xorwords    xs ys = map (uncurry xor) $ zip xs ys
+rotateLeft        = nrotate
+rotateRight n     = nrotate (negate n)
+xorwords          = zipWith xor
 
 rConTable :: [Word8]
 rConTable = [0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
