@@ -57,6 +57,7 @@ testKey = encodeStr "mysecretpassword"
 testMessage = encodeStr "Secret Message A"
 testExpected = "e8da47acc08bc751745ef8fbff44e107"
 test = aesHighlevel testKey testMessage
+untest = unaesHighlevel testKey (AES.encode $ test)
 
 nistKey = "2b7e151628aed2a6abf7158809cf4f3c"
 nistMessage = "6bc1bee22e409f96e93d7e117393172a"
@@ -68,6 +69,7 @@ fipsKey = "000102030405060708090a0b0c0d0e0f"
 fipsMessage = "00112233445566778899aabbccddeeff"
 fipsExpected = "69c4e0d86a7b0430d8cdb78070b4c55a"
 fips = aesHighlevel fipsKey fipsMessage
+unfips = unaesHighlevel fipsKey (AES.encode $ fips)
 
 mixColumnsMatrix :: [[Word8]]
 mixColumnsMatrix = [[2, 3, 1, 1],
@@ -84,19 +86,28 @@ invMixColumnsMatrix = [[14, 11, 13, 9],
 -- State Key => NewState
 type Modifier = [Word8] -> [Word8] -> [Word8]
 
-aes :: [Modifier] -> [Modifier] -> [Modifier] -> [Word8] -> [Word8] -> [Word8]
-aes initial intermediate final key state =
-    let keys = split 16 $ keyExpansion key
+aes :: [Modifier] -> [Modifier] -> [Modifier] -> ([Word8] -> [[Word8]]) -> [Word8] -> [Word8] -> [Word8]
+aes initial intermediate final expand key state =
+    let keys = expand key
         modifiers = [initial] ++ replicate 9 intermediate ++ [final]
     in foldl execRound state $ zip keys modifiers
 
 execRound state (key, modifiers) = foldl (\state m -> m state key) state modifiers
 
 aesEncrypt :: [Word8] -> [Word8] -> [Word8]
-aesEncrypt = aes initial intermediate final where
+aesEncrypt = aes initial intermediate final expand where
+    expand key   = split 16 $ keyExpansion key
     initial      = [modAddRoundKey]
     intermediate = [modSubBytes, modShiftRows, modMixColumns, modAddRoundKey]
     final        = [modSubBytes, modShiftRows, modAddRoundKey]
+
+aesDecrypt :: [Word8] -> [Word8] -> [Word8]
+aesDecrypt = aes initial intermediate final expand where
+    expand key   = reverse $ split 16 $ keyExpansion key
+    -- According to http://csrc.nist.gov/publications/fips/fips197/fips-197.pdf
+    initial      = [modAddRoundKey]
+    intermediate = [modInvShiftRows, modInvSubBytes, modAddRoundKey, modInvMixColumns]
+    final        = [modInvShiftRows, modInvSubBytes, modAddRoundKey]
 
 -- State -> Key -> NewState
 modAddRoundKey   = xorwords
@@ -122,6 +133,9 @@ mixColumns matrix state _ = concat result where
 
 aesHighlevel :: String -> String -> [Word8]
 aesHighlevel hexKey hexMessage = aesEncrypt (decode hexKey) (decode hexMessage)
+
+unaesHighlevel :: String -> String -> [Word8]
+unaesHighlevel hexKey hexMessage = aesDecrypt (decode hexKey) (decode hexMessage)
 
 --aes = aesHighlevel cbcKey1 cbcCt1
 aesFull = aesHighlevel testKey testMessage
