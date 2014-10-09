@@ -82,7 +82,7 @@ input to your program is `p`, `g`, `h` and the output is `x`.
 
 Implemented in python ([gmpy2](http://gmpy2.readthedocs.org/en/latest/)).
 
-## PA 6 Public Key Encryption from trapdoor permutations
+## PA6 Public Key Encryption from trapdoor permutations
 
 Your goal in this project is to break RSA when the public modulus N is generated
 incorrectly. This should serve as yet another reminder not to implement crypto
